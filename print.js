@@ -1,11 +1,42 @@
 /**
- * print.js — POS DZ · وحدة الطباعة الاحترافية  v8.2.0
+ * print.js — POS DZ · وحدة الطباعة الاحترافية  v8.3.0
  * ═══════════════════════════════════════════════════════
  *  • فاتورة: 4 أنواع (عادية / دين / جزئي / تسديد)
  *  • باركود: SVG حقيقي داخل نافذة الطباعة عبر JsBarcode
  *  • @page دقيق لكل حجم ورق / ملصق
  *
- *  إصلاحات v8.2.0:
+ *  v8.3.0 — طبقة Electron للتطبيقات المكتبية .exe
+ *  ══════════════════════════════════════════════════════
+ *  ثلاث طبقات بترتيب الأولوية:
+ *
+ *  [ 1 ] electronAPI  ← .exe / Electron — صامتة 100٪ بدون أي نافذة
+ *         المطلوب في preload.js عند بناء الـ exe:
+ *         ┌────────────────────────────────────────────────────────┐
+ *         │ const { contextBridge, ipcRenderer } = require('electron')
+ *         │ contextBridge.exposeInMainWorld('electronAPI', {
+ *         │   isElectron: true,
+ *         │   getPrinters: () => ipcRenderer.invoke('get-printers'),
+ *         │   printSilent: (html, printerName, opts) =>
+ *         │     ipcRenderer.invoke('print-silent', { html, printerName, opts })
+ *         │ })
+ *         └────────────────────────────────────────────────────────┘
+ *         المطلوب في main.js:
+ *         ┌────────────────────────────────────────────────────────┐
+ *         │ ipcMain.handle('get-printers', async () => {
+ *         │   return win.webContents.getPrintersAsync()
+ *         │     .then(list => list.map(p => p.name))
+ *         │ })
+ *         │ ipcMain.handle('print-silent', async (e, { html, printerName, opts }) => {
+ *         │   // فتح BrowserWindow مخفية → loadURL(dataURL) → webContents.print()
+ *         │   // راجع: https://www.electronjs.org/docs/api/web-contents#contentsprintoptions
+ *         │   return { success: true }
+ *         │ })
+ *         └────────────────────────────────────────────────────────┘
+ *
+ *  [ 2 ] server.js   ← تشغيل محلي مع node server.js (الوضع الحالي)
+ *  [ 3 ] window.open ← متصفح عادي / GitHub Pages (fallback نهائي)
+ *
+ *  إصلاحات v8.2.0 محفوظة بالكامل:
  *  ① XSS: JSON.stringify بدل دمج النصوص في JsBarcode
  *  ② AbortController بدل AbortSignal.timeout (دعم أوسع)
  *  ③ HTML → base64 قبل الإرسال (يمنع crash السيرفر)
@@ -91,10 +122,19 @@
   }
 
   /* ══════════════════════════════════════════════════════
-     طباعة صامتة عبر server.js
-     ② AbortController بدل AbortSignal.timeout
-     ③ HTML → base64 قبل الإرسال
-     ⑦ Toast "جاري الطباعة..." أثناء الانتظار
+     كشف بيئة التشغيل
+     true  → تطبيق مكتبي Electron (.exe) — window.electronAPI موجود
+     false → متصفح عادي (GitHub Pages أو server.js محلي)
+     ══════════════════════════════════════════════════════ */
+  function _isElectron() {
+    return !!(window.electronAPI && window.electronAPI.isElectron === true);
+  }
+
+  /* ══════════════════════════════════════════════════════
+     طباعة صامتة — ثلاث طبقات بترتيب الأولوية:
+     [ 1 ] electronAPI.printSilent  ← exe بدون أي نافذة Chrome
+     [ 2 ] server.js /api/print     ← node محلي + Puppeteer
+     [ 3 ] window.open fallback     ← يُستدعى من الخارج إذا عادت false
      ══════════════════════════════════════════════════════ */
   async function _silentPrint(html, css, printerName, paperMm) {
     var fullHtml =
@@ -103,6 +143,29 @@
       '<script src="' + JSBC_CDN + '"><\/script>\n' +
       '<style>' + css + '</style>\n</head>\n<body>' + html + '</body>\n</html>';
 
+    /* ══ الأولوية 1: Electron — طباعة مباشرة 100٪ صامتة ══ */
+    if (_isElectron() && typeof window.electronAPI.printSilent === 'function') {
+      if (window.toast) window.toast.show('🖨️ جاري الطباعة...', 'info', 5000);
+      try {
+        var result = await window.electronAPI.printSilent(
+          fullHtml,
+          printerName || '',
+          { paperMm: paperMm || 80 }
+        );
+        if (result && result.success !== false) {
+          if (window.toast) window.toast.show(
+            '✅ تمت الطباعة' + (printerName ? ' على: ' + printerName : ''),
+            'success'
+          );
+          return true;
+        }
+      } catch (e) {
+        console.warn('[print.js] Electron printSilent خطأ:', e);
+      }
+      return false;
+    }
+
+    /* ══ الأولوية 2: server.js /api/print ══ */
     /* ② AbortController — يعمل في كل المتصفحات */
     var controller = new AbortController();
     var timer = setTimeout(function() { controller.abort(); }, 30000);
@@ -132,6 +195,7 @@
       clearTimeout(timer);
     }
     return false;
+    /* ══ الأولوية 3: window.open — يُنفَّذ من الخارج عند false ══ */
   }
 
   /* ══════════════════════════════════════════════════════
