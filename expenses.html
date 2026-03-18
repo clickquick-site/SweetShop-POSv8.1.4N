@@ -1131,7 +1131,19 @@ async function init() {
   
   // تعيين التاريخ الافتراضي
   document.getElementById('expenseDate').value = window.dateUtils.today();
-  
+
+  // ── تحديثات آنية: إعادة تحميل المصاريف والعمال عند أي تغيير ─
+  const _rtExpReload = _debounce(async () => {
+    await loadAllData();
+    updateStats();
+    renderExpenses();
+    renderWorkers();
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['expenses', 'workers', 'workerPayments'],
+    _rtExpReload
+  );
+
   console.log('✅ صفحة المصاريف والعمال جاهزة');
 }
 
