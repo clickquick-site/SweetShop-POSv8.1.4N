@@ -1328,6 +1328,16 @@ async function init() {
   // فحص تنبيه الصلاحية — مرة واحدة يومياً
   await checkExpiryAlert();
 
+  // ── تحديثات آنية: إعادة تحميل المنتجات والزبائن عند أي تغيير ──
+  const _rtSaleReload = _debounce(async () => {
+    await loadData();
+    renderCart();   // تحديث السلة لعكس المخزون المحدَّث فوراً
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['products', 'customers', 'families', 'productBatches'],
+    _rtSaleReload
+  );
+
   console.log('✅ واجهة البيع جاهزة');
 }
 
