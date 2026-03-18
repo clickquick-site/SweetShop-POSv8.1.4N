@@ -1652,7 +1652,19 @@ async function init() {
       await loadDashboard();
     }
   }, 60000);
-  
+
+  // ── تحديثات آنية: إعادة تحميل اللوحة الحالية عند أي تغيير ───
+  const _rtRptReload = _debounce(async () => {
+    await loadAllData();
+    await updateSidebarValues();
+    showPanel(currentPanel);
+  }, 500);
+  window.realtimeManager?.subscribe(
+    ['sales', 'saleItems', 'expenses', 'debts', 'debtPayments',
+     'products', 'customers', 'workers', 'workerPayments', 'purchases'],
+    _rtRptReload
+  );
+
   console.log('✅ لوحة التحكم جاهزة');
 }
 
