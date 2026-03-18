@@ -930,7 +930,18 @@ async function init() {
   // تحديث الواجهة
   updateStats();
   renderCustomers();
-  
+
+  // ── تحديثات آنية: إعادة تحميل الزبائن والديون عند أي تغيير ──
+  const _rtCustReload = _debounce(async () => {
+    await loadAllData();
+    updateStats();
+    renderCustomers();
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['customers', 'debts', 'debtPayments', 'sales'],
+    _rtCustReload
+  );
+
   console.log('✅ صفحة الزبائن جاهزة');
 }
 
