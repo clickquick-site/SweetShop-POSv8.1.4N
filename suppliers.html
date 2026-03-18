@@ -1018,7 +1018,19 @@ async function init() {
   updateStats();
   renderSuppliers();
   renderPurchases();
-  
+
+  // ── تحديثات آنية: إعادة تحميل الموردين والمشتريات عند أي تغيير
+  const _rtSupReload = _debounce(async () => {
+    await loadAllData();
+    updateStats();
+    renderSuppliers();
+    renderPurchases();
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['suppliers', 'purchases'],
+    _rtSupReload
+  );
+
   console.log('✅ صفحة الموردين جاهزة');
 }
 
