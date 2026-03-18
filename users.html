@@ -928,7 +928,18 @@ async function init() {
   // تحديث الواجهة
   updateStats();
   renderUsers();
-  
+
+  // ── تحديثات آنية: إعادة تحميل المستخدمين عند أي تغيير ───────
+  const _rtUsrReload = _debounce(async () => {
+    await loadAllData();
+    updateStats();
+    renderUsers();
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['users', 'logs'],
+    _rtUsrReload
+  );
+
   console.log('✅ صفحة المستخدمين جاهزة');
 }
 
