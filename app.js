@@ -322,7 +322,7 @@ class DatabaseManager {
         updatedAt: new Date().toISOString()
       });
 
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => { resolve(req.result); window.realtimeManager?.notify(store); };
       req.onerror = () => reject(new Error(`فشل في حفظ ${store}: ${req.error}`));
     });
   }
@@ -337,7 +337,7 @@ class DatabaseManager {
         updatedAt: new Date().toISOString()
       });
 
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => { resolve(req.result); window.realtimeManager?.notify(store); };
       req.onerror = () => reject(new Error(`فشل في إضافة ${store}: ${req.error}`));
     });
   }
@@ -347,7 +347,7 @@ class DatabaseManager {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(store, 'readwrite');
       const req = tx.objectStore(store).delete(key);
-      req.onsuccess = () => resolve();
+      req.onsuccess = () => { resolve(); window.realtimeManager?.notify(store); };
       req.onerror = () => reject(new Error(`فشل في حذف ${store}: ${req.error}`));
     });
   }
@@ -1758,10 +1758,83 @@ async function recordExpiryLoss({ productName, batchId, qty, buyPrice, note }) {
 }
 
 // ══════════════════════════════════════════════════════════════
+//  _debounce — دالة مساعدة عامة
+// ══════════════════════════════════════════════════════════════
+function _debounce(fn, delay) {
+  let t;
+  return function () { clearTimeout(t); t = setTimeout(fn, delay); };
+}
+window._debounce = _debounce;
+
+// ══════════════════════════════════════════════════════════════
+//  RealtimeManager — تحديثات آنية عبر BroadcastChannel
+//  ✅ يُطلق إشعاراً لكل التبويبات/النوافذ المفتوحة بعد أي
+//     تغيير في DB (put / add / delete)
+//  ✅ المخازن الصامتة لا تُطلق إشعاراً (settings, logs …)
+// ══════════════════════════════════════════════════════════════
+const _RT_SILENT = new Set([
+  'settings', 'logs', 'counter', 'syncQueue', 'dailyEntries', 'transactions'
+]);
+
+class RealtimeManager {
+  constructor() {
+    this._subs    = {};   // store → [callbacks]
+    this._timers  = {};   // store → debounce timer id
+    this._channel = null;
+    this._initChannel();
+  }
+
+  _initChannel() {
+    try {
+      this._channel = new BroadcastChannel('posdz_realtime');
+      this._channel.onmessage = (e) => {
+        const store = e.data?.store;
+        if (store) this._fire(store);
+      };
+    } catch (e) {
+      console.warn('[Realtime] BroadcastChannel غير مدعوم في هذه البيئة');
+    }
+  }
+
+  // ── يُستدعى من DatabaseManager بعد كل عملية كتابة ──────────
+  notify(store) {
+    if (_RT_SILENT.has(store)) return;
+    clearTimeout(this._timers[store]);
+    this._timers[store] = setTimeout(() => {
+      this._fire(store);
+      try { this._channel?.postMessage({ store }); } catch (e) {}
+    }, 300);
+  }
+
+  // ── إطلاق الكولباكات المسجّلة لهذا المخزن ──────────────────
+  _fire(store) {
+    (this._subs[store] || []).forEach(cb => { try { cb(store); } catch (e) {} });
+    (this._subs['*']   || []).forEach(cb => { try { cb(store); } catch (e) {} });
+  }
+
+  // ── تسجيل مستمع لمخزن أو أكثر ──────────────────────────────
+  subscribe(stores, cb) {
+    const list = Array.isArray(stores) ? stores : [stores];
+    list.forEach(s => {
+      if (!this._subs[s]) this._subs[s] = [];
+      if (!this._subs[s].includes(cb)) this._subs[s].push(cb);
+    });
+  }
+
+  // ── إلغاء تسجيل مستمع ───────────────────────────────────────
+  unsubscribe(stores, cb) {
+    const list = Array.isArray(stores) ? stores : [stores];
+    list.forEach(s => {
+      if (this._subs[s]) this._subs[s] = this._subs[s].filter(x => x !== cb);
+    });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 //  تصدير الكلاسات العامة
 // ══════════════════════════════════════════════════════════════
 window.dbManager = new DatabaseManager();
-window.passwordManager = PasswordManager;
+window.realtimeManager = new RealtimeManager();
 window.sessionManager = new SessionManager();
 window.dateUtils = DateUtils;
 window.currencyFormatter = new CurrencyFormatter();
