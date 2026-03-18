@@ -336,6 +336,12 @@
       color: var(--text-primary);
     }
 
+    /* أنيميشن دوران زر تحديث الطابعات */
+    @keyframes _spin { to { transform: rotate(360deg); } }
+    .printer-refresh-btn.spinning i {
+      animation: _spin 0.8s linear infinite;
+    }
+
     /* بطاقات الطابعات */
     .printer-card {
       background: var(--bg-dark);
@@ -1064,15 +1070,16 @@
                     <i class="fa-solid fa-print"></i>
                     <span>طابعة الفواتير</span>
                   </div>
-                  <div class="setting-desc">تُحدَّث تلقائياً من الخادم</div>
+                  <div class="setting-desc">تُجلب تلقائياً من الخادم المحلي — أو اكتب الاسم يدوياً</div>
                 </div>
                 <div class="setting-control">
                   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                     <select class="form-select" id="printerInvoice" style="flex:1;min-width:180px;">
                       <option value="">— الطابعة الافتراضية —</option>
                     </select>
-                    <button class="btn btn-secondary btn-sm" onclick="loadPrintersList()"
-                            title="تحديث قائمة الطابعات من الخادم">
+                    <button class="btn btn-secondary btn-sm printer-refresh-btn"
+                            onclick="loadPrintersList(false)"
+                            title="تحديث قائمة الطابعات">
                       <i class="fa-solid fa-rotate"></i>
                     </button>
                   </div>
@@ -1208,15 +1215,16 @@
                     <i class="fa-solid fa-print"></i>
                     <span>طابعة الباركود</span>
                   </div>
-                  <div class="setting-desc">تُحدَّث تلقائياً من الخادم</div>
+                  <div class="setting-desc">تُجلب تلقائياً من الخادم المحلي — أو اكتب الاسم يدوياً</div>
                 </div>
                 <div class="setting-control">
                   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                     <select class="form-select" id="printerBarcode" style="flex:1;min-width:180px;">
                       <option value="">— الطابعة الافتراضية —</option>
                     </select>
-                    <button class="btn btn-secondary btn-sm" onclick="loadPrintersList()"
-                            title="تحديث قائمة الطابعات من الخادم">
+                    <button class="btn btn-secondary btn-sm printer-refresh-btn"
+                            onclick="loadPrintersList(false)"
+                            title="تحديث قائمة الطابعات">
                       <i class="fa-solid fa-rotate"></i>
                     </button>
                   </div>
@@ -2172,6 +2180,11 @@ function switchTab(tabId) {
   // صوت الانتقال بين التبويبات
   window.SoundManager?.play('nav-tab');
 
+  // ── تحميل الطابعات تلقائياً وبصمت عند زيارة تبويب الطباعة أو الباركود ──
+  if (tabId === 'print' || tabId === 'barcode') {
+    loadPrintersList(true); // true = صامت بدون toast
+  }
+
   // إخفاء شريط الحفظ في تبويبات لا تحتاجه
   const noSaveTabs = ['about', 'backup'];
   const saveBar = document.querySelector('.save-bar');
@@ -2245,8 +2258,9 @@ async function loadSettings() {
     preview.style.display = 'block';
   }
   
-  // ── تحميل قائمة الطابعات وتحديد المحفوظة ──────────────────
-  await loadPrintersList();
+  // ── تحميل قائمة الطابعات — فقط عند زيارة تبويب الطباعة أو الباركود ──
+  // (لا نستدعيها هنا لتجنب طلب HTTP على localhost عند فتح الإعدادات)
+  // await loadPrintersList(); ← محذوف عمداً
 
   // ── تحميل رقم الفاتورة الحالي من IndexedDB ────────────────
   try {
@@ -2546,52 +2560,90 @@ async function updateInvoicePreview() {
 // ============================================================
 //  جلب قائمة الطابعات من الخادم
 // ============================================================
-async function loadPrintersList() {
-  const serverUrl = (
-    document.getElementById('serverUrl')?.value?.trim() ||
-    localStorage.getItem('posdz_server_url') ||
-    'http://localhost:3000'
-  ).replace(/\/$/, '');
-
+// ============================================================
+//  جلب قائمة الطابعات
+//  الأولوية: [ 1 ] electronAPI  [ 2 ] server.js  [ 3 ] محفوظة فقط
+//  silent=true → بدون toast عند الفشل (عند الانتقال للتبويب تلقائياً)
+// ============================================================
+async function loadPrintersList(silent = false) {
   const savedInvoice = await window.getSetting('printerInvoice') || '';
   const savedBarcode = await window.getSetting('printerBarcode') || '';
   const selInv = document.getElementById('printerInvoice');
   const selBrc = document.getElementById('printerBarcode');
 
+  // ── تحريك أيقونة التحديث أثناء الجلب ─────────────────────
+  const refreshBtns = document.querySelectorAll('.printer-refresh-btn');
+  refreshBtns.forEach(b => b.classList.add('spinning'));
+
+  // ── دالة مساعدة: تعبئة القائمة مع الحفاظ على القيمة المحفوظة ─
+  function _fill(sel, list, saved) {
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
+    list.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      sel.appendChild(opt);
+    });
+    if (saved) sel.value = saved;
+  }
+
+  // ── دالة مساعدة: وضع القيمة المحفوظة فقط (بدون قائمة) ────
+  function _fillSaved(sel, saved) {
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
+    if (saved) {
+      const opt = document.createElement('option');
+      opt.value = saved; opt.textContent = saved; opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
   try {
-    const res  = await fetch(`${serverUrl}/api/printers`,
-                             { signal: AbortSignal.timeout(4000) });
+    /* ══ الأولوية 1: Electron — جلب الطابعات مباشرة من النظام ══ */
+    if (window.electronAPI && typeof window.electronAPI.getPrinters === 'function') {
+      const list = await window.electronAPI.getPrinters();
+      const names = Array.isArray(list)
+        ? list.map(p => (typeof p === 'string' ? p : p.name)).filter(Boolean)
+        : [];
+      _fill(selInv, names, savedInvoice);
+      _fill(selBrc, names, savedBarcode);
+      if (!silent && names.length > 0) {
+        window.toast?.show(`✅ تم جلب ${names.length} طابعة`, 'success');
+      }
+      return;
+    }
+
+    /* ══ الأولوية 2: server.js /api/printers ══ */
+    const serverUrl = (
+      document.getElementById('serverUrl')?.value?.trim() ||
+      localStorage.getItem('posdz_server_url') ||
+      'http://localhost:3000'
+    ).replace(/\/$/, '');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+
+    const res  = await fetch(`${serverUrl}/api/printers`, { signal: controller.signal });
+    clearTimeout(timeout);
     const data = await res.json();
     const list = Array.isArray(data.printers) ? data.printers : [];
 
-    [selInv, selBrc].forEach(sel => {
-      if (!sel) return;
-      sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
-      list.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p; opt.textContent = p;
-        sel.appendChild(opt);
-      });
-    });
+    _fill(selInv, list, savedInvoice);
+    _fill(selBrc, list, savedBarcode);
 
-    if (selInv && savedInvoice) selInv.value = savedInvoice;
-    if (selBrc && savedBarcode) selBrc.value = savedBarcode;
-
-    if (list.length > 0) {
+    if (!silent && list.length > 0) {
       window.toast?.show(`✅ تم جلب ${list.length} طابعة`, 'success');
-    } else {
-      window.toast?.show('لا توجد طابعات أو الخادم غير متاح', 'warning');
     }
+
   } catch (e) {
-    [selInv, selBrc].forEach(sel => {
-      if (!sel) return;
-      sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
-    });
-    if (selInv && savedInvoice)
-      selInv.innerHTML += `<option value="${savedInvoice}" selected>${savedInvoice}</option>`;
-    if (selBrc && savedBarcode)
-      selBrc.innerHTML += `<option value="${savedBarcode}" selected>${savedBarcode}</option>`;
-    window.toast?.show('الخادم غير متاح — يعرض الطابعات المحفوظة فقط', 'info');
+    /* ══ الأولوية 3: الطابعات المحفوظة فقط ══ */
+    _fillSaved(selInv, savedInvoice);
+    _fillSaved(selBrc, savedBarcode);
+    if (!silent) {
+      window.toast?.show('الخادم غير متاح — اكتب اسم الطابعة يدوياً', 'info', 3000);
+    }
+  } finally {
+    refreshBtns.forEach(b => b.classList.remove('spinning'));
   }
 }
 
