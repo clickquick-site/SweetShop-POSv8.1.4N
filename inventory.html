@@ -22,8 +22,8 @@
     /* بطاقات التنبيهات */
     .alerts-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
       margin-bottom: 20px;
     }
 
@@ -31,29 +31,58 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 16px 18px;
+      padding: 18px 20px;
       display: flex;
-      align-items: center;
-      gap: 15px;
+      flex-direction: column;
+      gap: 12px;
       transition: all 0.2s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
     }
 
+    .alert-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .alert-card:hover::before { opacity: 1; }
+
     .alert-card.warning {
-      border-right: 4px solid var(--warning);
+      border-right: 5px solid var(--warning);
+      background: linear-gradient(135deg, var(--bg-card) 70%, rgba(245,158,11,0.06));
+    }
+    .alert-card.warning::before {
+      background: rgba(245,158,11,0.04);
     }
 
     .alert-card.danger {
-      border-right: 4px solid var(--danger);
+      border-right: 5px solid var(--danger);
+      background: linear-gradient(135deg, var(--bg-card) 70%, rgba(239,68,68,0.06));
+    }
+    .alert-card.danger::before {
+      background: rgba(239,68,68,0.04);
     }
 
     .alert-card.success {
-      border-right: 4px solid var(--success);
+      border-right: 5px solid var(--success);
+      background: linear-gradient(135deg, var(--bg-card) 70%, rgba(16,185,129,0.06));
+    }
+
+    /* رأس البطاقة: أيقونة + عنوان */
+    .alert-card-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
     .alert-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -62,36 +91,57 @@
     }
 
     .alert-icon.warning {
-      background: rgba(245, 158, 11, 0.15);
+      background: rgba(245, 158, 11, 0.18);
       color: var(--warning);
     }
 
     .alert-icon.danger {
-      background: rgba(239, 68, 68, 0.15);
+      background: rgba(239, 68, 68, 0.18);
       color: var(--danger);
     }
 
     .alert-icon.success {
-      background: rgba(16, 185, 129, 0.15);
+      background: rgba(16, 185, 129, 0.18);
       color: var(--success);
     }
 
-    .alert-content {
-      flex: 1;
-    }
-
     .alert-title {
-      font-size: 0.8rem;
-      color: var(--text-secondary);
-      font-weight: 700;
-      margin-bottom: 4px;
+      font-size: 0.92rem;
+      color: var(--text-primary);
+      font-weight: 800;
+      line-height: 1.3;
     }
 
+    /* الرقم الرئيسي */
     .alert-value {
-      font-size: 1.3rem;
+      font-size: 3rem;
       font-weight: 900;
       font-family: 'Impact', sans-serif;
+      line-height: 1;
+      letter-spacing: -1px;
     }
+
+    /* شريط المستويات الفرعية */
+    .alert-levels {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .alert-level-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .alert-level-badge.crit  { background: rgba(239,68,68,0.15);  color: #ef4444; }
+    .alert-level-badge.warn  { background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .alert-level-badge.watch { background: rgba(59,130,246,0.15); color: #60a5fa; }
 
     /* شريط البحث المتقدم */
     .search-section {
@@ -1595,36 +1645,49 @@ async function updateAlerts() {
   }).length;
 
   document.getElementById('alertsGrid').innerHTML = `
-    <!-- ── مخزون: 4 مستويات ── -->
-    <div class="alert-card ${criticalStock > 0 ? 'danger' : 'warning'}" style="cursor:pointer;" onclick="loadProducts()">
-      <div class="alert-icon ${criticalStock > 0 ? 'danger' : 'warning'}">
-        <i class="fa-solid fa-boxes-stacked"></i>
-      </div>
-      <div class="alert-content">
-        <div class="alert-title">⛔ نافد المخزون</div>
-        <div class="alert-value">${outStock}</div>
-        ${criticalStock > 0 ? `<div style="font-size:0.72rem;color:var(--danger);margin-top:2px;">🚨 ${criticalStock} حرج · ⚠️ ${warningStock} تحذير · 🟡 ${watchStock} تنبيه</div>` : ''}
-      </div>
-    </div>
-
-    <div class="alert-card danger" style="cursor:pointer;" onclick="switchTab('expiry')">
-      <div class="alert-icon danger"><i class="fa-solid fa-calendar-xmark"></i></div>
-      <div class="alert-content">
-        <div class="alert-title">⛔ منتهية الصلاحية</div>
-        <div class="alert-value">${expired}</div>
-      </div>
-    </div>
-
-    <div class="alert-card warning" style="cursor:pointer;" onclick="switchTab('expiry')">
-      <div class="alert-icon warning" style="background:rgba(234,88,12,0.15);color:#ea580c;">
-        <i class="fa-solid fa-clock"></i>
-      </div>
-      <div class="alert-content">
-        <div class="alert-title">تنبيهات الصلاحية</div>
-        <div class="alert-value" style="color:#ea580c;">${expCrit + expWarn + expWatch}</div>
-        <div style="font-size:0.72rem; margin-top:3px; color:var(--text-secondary);">
-          🚨 ${expCrit} حرج · ⚠️ ${expWarn} تحذير · 🟡 ${expWatch} تنبيه
+    <!-- ── نافد المخزون ── -->
+    <div class="alert-card ${criticalStock > 0 ? 'danger' : 'warning'}" onclick="loadProducts()">
+      <div class="alert-card-head">
+        <div class="alert-icon ${criticalStock > 0 ? 'danger' : 'warning'}">
+          <i class="fa-solid fa-boxes-stacked"></i>
         </div>
+        <div class="alert-title">نافد المخزون</div>
+      </div>
+      <div class="alert-value" style="color:${criticalStock > 0 ? 'var(--danger)' : 'var(--warning)'};">${outStock}</div>
+      <div class="alert-levels">
+        <span class="alert-level-badge crit">🚨 ${criticalStock} حرج</span>
+        <span class="alert-level-badge warn">⚠️ ${warningStock} تحذير</span>
+        <span class="alert-level-badge watch">🔵 ${watchStock} تنبيه</span>
+      </div>
+    </div>
+
+    <!-- ── منتهية الصلاحية ── -->
+    <div class="alert-card danger" onclick="switchTab('expiry')">
+      <div class="alert-card-head">
+        <div class="alert-icon danger">
+          <i class="fa-solid fa-calendar-xmark"></i>
+        </div>
+        <div class="alert-title">منتهية الصلاحية</div>
+      </div>
+      <div class="alert-value" style="color:var(--danger);">${expired}</div>
+      <div class="alert-levels">
+        <span class="alert-level-badge crit">⛔ منتهية الصلاحية</span>
+      </div>
+    </div>
+
+    <!-- ── تنبيهات الصلاحية ── -->
+    <div class="alert-card warning" onclick="switchTab('expiry')">
+      <div class="alert-card-head">
+        <div class="alert-icon warning" style="background:rgba(234,88,12,0.15);color:#ea580c;">
+          <i class="fa-solid fa-clock"></i>
+        </div>
+        <div class="alert-title">تنبيهات الصلاحية</div>
+      </div>
+      <div class="alert-value" style="color:#ea580c;">${expCrit + expWarn + expWatch}</div>
+      <div class="alert-levels">
+        <span class="alert-level-badge crit">🚨 ${expCrit} حرج</span>
+        <span class="alert-level-badge warn">⚠️ ${expWarn} تحذير</span>
+        <span class="alert-level-badge watch">🟡 ${expWatch} تنبيه</span>
       </div>
     </div>
   `;
@@ -1950,17 +2013,22 @@ async function saveProduct() {
   
   try {
     if (id) {
+      // تعديل منتج موجود — العودة لقائمة الكل
       product.id = parseInt(id);
       await window.dbManager.put('products', product);
       window.toast.show('تم تعديل المنتج', 'success');
+      await loadData();
+      clearProductForm();
+      switchTab('all');
     } else {
+      // إضافة منتج جديد — البقاء في نفس التبويب لإضافة آخر
       await window.dbManager.add('products', product);
-      window.toast.show('تمت إضافة المنتج', 'success');
+      window.toast.show('✅ تمت إضافة المنتج — يمكنك إضافة منتج آخر', 'success', 3000);
+      await loadData();
+      clearProductForm();
+      // نبقى في تبويب "إضافة منتج" — لا switchTab
+      document.getElementById('productName').focus();
     }
-    
-    await loadData();
-    clearProductForm();
-    switchTab('all');
     
   } catch (e) {
     console.error('خطأ في حفظ المنتج:', e);
