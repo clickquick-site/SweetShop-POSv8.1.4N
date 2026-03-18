@@ -1514,7 +1514,19 @@ async function init() {
   
   // تهيئة الأحداث
   initKeyboardShortcuts();
-  
+
+  // ── تحديثات آنية: إعادة تحميل المخزون عند أي تغيير ──────────
+  const _rtInvReload = _debounce(async () => {
+    await loadData();
+    await loadProducts();
+    await updateAlerts();
+    updateAlertBanner();
+  }, 400);
+  window.realtimeManager?.subscribe(
+    ['products', 'families', 'productBatches'],
+    _rtInvReload
+  );
+
   console.log('✅ صفحة المخزون جاهزة');
 }
 
