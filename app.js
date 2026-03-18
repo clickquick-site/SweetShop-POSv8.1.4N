@@ -1835,6 +1835,7 @@ class RealtimeManager {
 // ══════════════════════════════════════════════════════════════
 window.dbManager = new DatabaseManager();
 window.realtimeManager = new RealtimeManager();
+window.passwordManager = PasswordManager;
 window.sessionManager = new SessionManager();
 window.dateUtils = DateUtils;
 window.currencyFormatter = new CurrencyFormatter();
