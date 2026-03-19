@@ -132,9 +132,13 @@
 
   /* ══════════════════════════════════════════════════════
      طباعة صامتة — ثلاث طبقات بترتيب الأولوية:
-     [ 1 ] electronAPI.printSilent  ← exe بدون أي نافذة Chrome
+     [ 1 ] electronAPI.printSilent  ← exe بدون أي نافذة
      [ 2 ] server.js /api/print     ← node محلي + Puppeteer
-     [ 3 ] window.open fallback     ← يُستدعى من الخارج إذا عادت false
+     [ 3 ] window.open fallback     ← يُستدعى من الخارج عند false
+
+     القاعدة:
+     • خطأ EXPECTED  (خادم غائب)  → صامت، ننتقل للطبقة التالية
+     • خطأ UNEXPECTED (API موجود لكن فشل) → إشعار واضح
      ══════════════════════════════════════════════════════ */
   async function _silentPrint(html, css, printerName, paperMm) {
     var fullHtml =
@@ -143,9 +147,9 @@
       '<script src="' + JSBC_CDN + '"><\/script>\n' +
       '<style>' + css + '</style>\n</head>\n<body>' + html + '</body>\n</html>';
 
-    /* ══ الأولوية 1: Electron — طباعة مباشرة 100٪ صامتة ══ */
+    /* ══ الطبقة 1: Electron — UNEXPECTED إذا فشل ══ */
     if (_isElectron() && typeof window.electronAPI.printSilent === 'function') {
-      if (window.toast) window.toast.show('🖨️ جاري الطباعة...', 'info', 5000);
+      if (window.toast) window.toast.show('🖨️ جاري الطباعة...', 'info', 8000);
       try {
         var result = await window.electronAPI.printSilent(
           fullHtml,
@@ -159,22 +163,26 @@
           );
           return true;
         }
+        // Electron رد بـ success:false — خطأ غير متوقع
+        var errMsg = result?.error || 'فشل الطباعة — تحقق من الطابعة';
+        window.errorLogger?.error('print.Electron', errMsg);
+        if (window.toast) window.toast.show('❌ ' + errMsg, 'error', 6000);
+        return false;
       } catch (e) {
-        console.warn('[print.js] Electron printSilent خطأ:', e);
+        // استثناء في electronAPI — غير متوقع
+        window.errorLogger?.error('print.Electron', 'خطأ في واجهة الطباعة', e);
+        if (window.toast) window.toast.show('❌ خطأ في واجهة الطباعة — تحقق من التطبيق', 'error', 6000);
+        return false;
       }
-      return false;
     }
 
-    /* ══ الأولوية 2: server.js /api/print ══ */
-    /* ② AbortController — يعمل في كل المتصفحات */
+    /* ══ الطبقة 2: server.js — EXPECTED إذا غائب ══ */
     var controller = new AbortController();
     var timer = setTimeout(function() { controller.abort(); }, 30000);
 
-    /* ⑦ Toast جاري الطباعة */
     if (window.toast) window.toast.show('🖨️ جاري الطباعة...', 'info', 30000);
 
     try {
-      /* ③ إرسال base64 بدل النص الخام — يمنع crash السيرفر */
       var res = await fetch(_serverUrl() + '/api/print', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -183,19 +191,30 @@
           printerName : printerName || '',
           paperMm     : paperMm    || 80,
         }),
-        signal : controller.signal,
+        signal: controller.signal,
       });
       clearTimeout(timer);
       var data = await res.json();
+
       if (data.status === 'ok') {
-        if (window.toast) window.toast.show('✅ تمت الطباعة على: ' + (printerName || 'الطابعة الافتراضية'), 'success');
+        if (window.toast) window.toast.show(
+          '✅ تمت الطباعة على: ' + (printerName || 'الطابعة الافتراضية'),
+          'success'
+        );
         return true;
       }
+      // الخادم يعمل لكن أعاد خطأ — UNEXPECTED
+      var srvErr = data.error || 'خطأ في خادم الطباعة';
+      window.errorLogger?.warn('print.server', srvErr);
+      if (window.toast) window.toast.show('⚠️ ' + srvErr, 'warning', 5000);
+      return false;
+
     } catch (e) {
       clearTimeout(timer);
+      // الخادم غير متاح — EXPECTED — ننتقل لـ window.open بصمت
+      window.errorLogger?.info('print.server', 'الخادم غير متاح — سيُستخدم window.open');
+      return false;
     }
-    return false;
-    /* ══ الأولوية 3: window.open — يُنفَّذ من الخارج عند false ══ */
   }
 
   /* ══════════════════════════════════════════════════════
