@@ -323,7 +323,11 @@ class DatabaseManager {
       });
 
       req.onsuccess = () => { resolve(req.result); window.realtimeManager?.notify(store); };
-      req.onerror = () => reject(new Error(`فشل في حفظ ${store}: ${req.error}`));
+      req.onerror = () => {
+        const err = new Error(`فشل في حفظ ${store}: ${req.error}`);
+        window.errorLogger?.error('DB.put', `فشل حفظ البيانات في "${store}"`, err);
+        reject(err);
+      };
     });
   }
 
@@ -338,7 +342,11 @@ class DatabaseManager {
       });
 
       req.onsuccess = () => { resolve(req.result); window.realtimeManager?.notify(store); };
-      req.onerror = () => reject(new Error(`فشل في إضافة ${store}: ${req.error}`));
+      req.onerror = () => {
+        const err = new Error(`فشل في إضافة ${store}: ${req.error}`);
+        window.errorLogger?.error('DB.add', `فشل إضافة سجل في "${store}"`, err);
+        reject(err);
+      };
     });
   }
 
@@ -348,7 +356,11 @@ class DatabaseManager {
       const tx = db.transaction(store, 'readwrite');
       const req = tx.objectStore(store).delete(key);
       req.onsuccess = () => { resolve(); window.realtimeManager?.notify(store); };
-      req.onerror = () => reject(new Error(`فشل في حذف ${store}: ${req.error}`));
+      req.onerror = () => {
+        const err = new Error(`فشل في حذف ${store}: ${req.error}`);
+        window.errorLogger?.error('DB.delete', `فشل حذف سجل من "${store}"`, err);
+        reject(err);
+      };
     });
   }
 
@@ -1758,8 +1770,62 @@ async function recordExpiryLoss({ productName, batchId, qty, buyPrice, note }) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  _debounce — دالة مساعدة عامة
+//  ErrorLogger — نظام مركزي للأخطاء
+//  يُفرّق بين نوعين:
+//  • EXPECTED  : حالة طبيعية متوقعة (خادم غائب على GitHub Pages)
+//                → console.info فقط، لا إزعاج للمستخدم
+//  • UNEXPECTED: خطأ حقيقي يحتاج انتباه (DB فشل، API خطأ …)
+//                → console.error + toast للمستخدم + سجل داخلي
 // ══════════════════════════════════════════════════════════════
+class ErrorLogger {
+  constructor() {
+    this._log  = [];          // آخر 50 خطأ في الذاكرة
+    this._MAX  = 50;
+  }
+
+  // خطأ غير متوقع — يظهر للمستخدم
+  error(context, message, err) {
+    const entry = {
+      level:   'error',
+      context,
+      message,
+      detail:  err?.message || String(err || ''),
+      time:    new Date().toISOString(),
+    };
+    this._store(entry);
+    console.error(`[POS DZ] ❌ [${context}] ${message}`, err || '');
+    window.toast?.show(`❌ ${message}`, 'error', 5000);
+  }
+
+  // تحذير — يظهر للمستخدم لكن أقل حدة
+  warn(context, message, err) {
+    const entry = {
+      level:   'warn',
+      context,
+      message,
+      detail:  err?.message || String(err || ''),
+      time:    new Date().toISOString(),
+    };
+    this._store(entry);
+    console.warn(`[POS DZ] ⚠️ [${context}] ${message}`, err || '');
+    window.toast?.show(`⚠️ ${message}`, 'warning', 4000);
+  }
+
+  // حالة متوقعة — console فقط بدون إزعاج
+  info(context, message) {
+    console.info(`[POS DZ] ℹ️ [${context}] ${message}`);
+  }
+
+  // جلب السجل للتشخيص
+  getLogs() { return [...this._log]; }
+
+  _store(entry) {
+    this._log.unshift(entry);
+    if (this._log.length > this._MAX) this._log.length = this._MAX;
+  }
+}
+
+window.errorLogger = new ErrorLogger();
 function _debounce(fn, delay) {
   let t;
   return function () { clearTimeout(t); t = setTimeout(fn, delay); };
@@ -1768,19 +1834,19 @@ window._debounce = _debounce;
 
 // ══════════════════════════════════════════════════════════════
 //  RealtimeManager — تحديثات آنية عبر BroadcastChannel
-//  ✅ يُطلق إشعاراً لكل التبويبات/النوافذ المفتوحة بعد أي
-//     تغيير في DB (put / add / delete)
-//  ✅ المخازن الصامتة لا تُطلق إشعاراً (settings, logs …)
+//  ✅ batch: كتابات متعددة في نفس العملية → إشعار واحد فقط
+//  ✅ transactions و dailyEntries خرجا من القائمة الصامتة
 // ══════════════════════════════════════════════════════════════
 const _RT_SILENT = new Set([
-  'settings', 'logs', 'counter', 'syncQueue', 'dailyEntries', 'transactions'
+  'settings', 'logs', 'counter', 'syncQueue'
 ]);
 
 class RealtimeManager {
   constructor() {
-    this._subs    = {};   // store → [callbacks]
-    this._timers  = {};   // store → debounce timer id
-    this._channel = null;
+    this._subs        = {};   // store → [callbacks]
+    this._batchTimer  = null; // مؤقت الـ batch الموحّد
+    this._batchStores = new Set(); // المخازن المتراكمة في الـ batch
+    this._channel     = null;
     this._initChannel();
   }
 
@@ -1788,8 +1854,8 @@ class RealtimeManager {
     try {
       this._channel = new BroadcastChannel('posdz_realtime');
       this._channel.onmessage = (e) => {
-        const store = e.data?.store;
-        if (store) this._fire(store);
+        const stores = e.data?.stores;
+        if (Array.isArray(stores)) stores.forEach(s => this._fire(s));
       };
     } catch (e) {
       console.warn('[Realtime] BroadcastChannel غير مدعوم في هذه البيئة');
@@ -1797,13 +1863,19 @@ class RealtimeManager {
   }
 
   // ── يُستدعى من DatabaseManager بعد كل عملية كتابة ──────────
+  // يجمع كل الكتابات المتزامنة في 500ms ويُطلق إشعاراً واحداً
   notify(store) {
     if (_RT_SILENT.has(store)) return;
-    clearTimeout(this._timers[store]);
-    this._timers[store] = setTimeout(() => {
-      this._fire(store);
-      try { this._channel?.postMessage({ store }); } catch (e) {}
-    }, 300);
+    this._batchStores.add(store);
+    clearTimeout(this._batchTimer);
+    this._batchTimer = setTimeout(() => {
+      const stores = [...this._batchStores];
+      this._batchStores.clear();
+      this._batchTimer = null;
+      // إطلاق كل المخازن المتراكمة مرة واحدة
+      stores.forEach(s => this._fire(s));
+      try { this._channel?.postMessage({ stores }); } catch (e) {}
+    }, 500);
   }
 
   // ── إطلاق الكولباكات المسجّلة لهذا المخزن ──────────────────
@@ -1878,8 +1950,9 @@ async function initApp() {
     console.log('✅ تم تهيئة التطبيق بنجاح');
     
   } catch (e) {
+    window.errorLogger?.error('initApp', 'فشل تهيئة التطبيق — أعد تحميل الصفحة', e);
     console.error('❌ فشل في تهيئة التطبيق:', e);
-    window.toast.show('فشل في تحميل التطبيق', 'error');
+    window.toast?.show('❌ فشل في تحميل التطبيق — أعد تحميل الصفحة', 'error', 8000);
   }
 }
 
