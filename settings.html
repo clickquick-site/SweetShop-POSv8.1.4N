@@ -2558,12 +2558,15 @@ async function updateInvoicePreview() {
 }
 
 // ============================================================
-//  جلب قائمة الطابعات من الخادم
-// ============================================================
-// ============================================================
 //  جلب قائمة الطابعات
-//  الأولوية: [ 1 ] electronAPI  [ 2 ] server.js  [ 3 ] محفوظة فقط
-//  silent=true → بدون toast عند الفشل (عند الانتقال للتبويب تلقائياً)
+//  ثلاث طبقات: electronAPI ← server.js ← محفوظ
+//
+//  القاعدة الدقيقة:
+//  • electronAPI موجود لكن getPrinters فشل  → UNEXPECTED → toast خطأ
+//  • server.js غائب (GitHub Pages)          → EXPECTED   → صامت
+//  • server.js يعمل ويُعيد قائمة فارغة     → EXPECTED   → صامت
+//  • silent=true  → الاستخدام الداخلي
+//  • silent=false → زر التحديث اليدوي
 // ============================================================
 async function loadPrintersList(silent = false) {
   const savedInvoice = await window.getSetting('printerInvoice') || '';
@@ -2571,11 +2574,9 @@ async function loadPrintersList(silent = false) {
   const selInv = document.getElementById('printerInvoice');
   const selBrc = document.getElementById('printerBarcode');
 
-  // ── تحريك أيقونة التحديث أثناء الجلب ─────────────────────
   const refreshBtns = document.querySelectorAll('.printer-refresh-btn');
   refreshBtns.forEach(b => b.classList.add('spinning'));
 
-  // ── دالة مساعدة: تعبئة القائمة مع الحفاظ على القيمة المحفوظة ─
   function _fill(sel, list, saved) {
     if (!sel) return;
     sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
@@ -2587,7 +2588,6 @@ async function loadPrintersList(silent = false) {
     if (saved) sel.value = saved;
   }
 
-  // ── دالة مساعدة: وضع القيمة المحفوظة فقط (بدون قائمة) ────
   function _fillSaved(sel, saved) {
     if (!sel) return;
     sel.innerHTML = '<option value="">— الطابعة الافتراضية —</option>';
@@ -2599,21 +2599,29 @@ async function loadPrintersList(silent = false) {
   }
 
   try {
-    /* ══ الأولوية 1: Electron — جلب الطابعات مباشرة من النظام ══ */
+    /* ══ الطبقة 1: electronAPI — UNEXPECTED إذا فشل ══ */
     if (window.electronAPI && typeof window.electronAPI.getPrinters === 'function') {
-      const list = await window.electronAPI.getPrinters();
-      const names = Array.isArray(list)
-        ? list.map(p => (typeof p === 'string' ? p : p.name)).filter(Boolean)
-        : [];
-      _fill(selInv, names, savedInvoice);
-      _fill(selBrc, names, savedBarcode);
-      if (!silent && names.length > 0) {
-        window.toast?.show(`✅ تم جلب ${names.length} طابعة`, 'success');
+      try {
+        const list = await window.electronAPI.getPrinters();
+        const names = Array.isArray(list)
+          ? list.map(p => (typeof p === 'string' ? p : p.name)).filter(Boolean)
+          : [];
+        _fill(selInv, names, savedInvoice);
+        _fill(selBrc, names, savedBarcode);
+        if (!silent && names.length > 0)
+          window.toast?.show(`✅ تم جلب ${names.length} طابعة`, 'success');
+        window.errorLogger?.info('printers', `Electron: ${names.length} طابعة`);
+        return;
+      } catch (e) {
+        // electronAPI موجود لكن getPrinters رمى خطأ — UNEXPECTED
+        window.errorLogger?.error('printers.Electron', 'فشل جلب الطابعات من النظام', e);
+        _fillSaved(selInv, savedInvoice);
+        _fillSaved(selBrc, savedBarcode);
+        return;
       }
-      return;
     }
 
-    /* ══ الأولوية 2: server.js /api/printers ══ */
+    /* ══ الطبقة 2: server.js — EXPECTED إذا غائب ══ */
     const serverUrl = (
       document.getElementById('serverUrl')?.value?.trim() ||
       localStorage.getItem('posdz_server_url') ||
@@ -2621,27 +2629,26 @@ async function loadPrintersList(silent = false) {
     ).replace(/\/$/, '');
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 3000);
 
-    const res  = await fetch(`${serverUrl}/api/printers`, { signal: controller.signal });
-    clearTimeout(timeout);
-    const data = await res.json();
-    const list = Array.isArray(data.printers) ? data.printers : [];
-
-    _fill(selInv, list, savedInvoice);
-    _fill(selBrc, list, savedBarcode);
-
-    if (!silent && list.length > 0) {
-      window.toast?.show(`✅ تم جلب ${list.length} طابعة`, 'success');
+    try {
+      const res  = await fetch(`${serverUrl}/api/printers`, { signal: controller.signal });
+      clearTimeout(timeout);
+      const data = await res.json();
+      const list = Array.isArray(data.printers) ? data.printers : [];
+      _fill(selInv, list, savedInvoice);
+      _fill(selBrc, list, savedBarcode);
+      if (!silent && list.length > 0)
+        window.toast?.show(`✅ تم جلب ${list.length} طابعة`, 'success');
+      window.errorLogger?.info('printers', `server.js: ${list.length} طابعة`);
+    } catch (e) {
+      clearTimeout(timeout);
+      // الخادم غائب — EXPECTED على GitHub Pages — صامت تماماً
+      window.errorLogger?.info('printers', 'server.js غير متاح — استخدام المحفوظ');
+      _fillSaved(selInv, savedInvoice);
+      _fillSaved(selBrc, savedBarcode);
     }
 
-  } catch (e) {
-    /* ══ الأولوية 3: الطابعات المحفوظة فقط ══ */
-    _fillSaved(selInv, savedInvoice);
-    _fillSaved(selBrc, savedBarcode);
-    if (!silent) {
-      window.toast?.show('الخادم غير متاح — اكتب اسم الطابعة يدوياً', 'info', 3000);
-    }
   } finally {
     refreshBtns.forEach(b => b.classList.remove('spinning'));
   }
